@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ginger Plant Monitor — Remote Dashboard</title>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+<style>
+  :root {
+    --bg: #0e0f13;
+    --card: #1a1c22;
+    --accent: #17a2b8;
+    --accent2: #667eea;
+    --text: #f1f3f5;
+    --muted: #8a92a0;
+    --on: #2ecc71;
+    --off-bg: #2a2d35;
+    --warn: #e74c3c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: radial-gradient(circle at top, #14161c, var(--bg));
+    color: var(--text);
+    padding: 24px 16px 60px;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  header { text-align: center; margin-bottom: 20px; }
+  header h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 0.85rem; }
+  .pill-row { display: flex; justify-content: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .pill {
+    font-size: 0.75rem;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--off-bg);
+    color: var(--muted);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+  .dot.ok { background: var(--on); }
+
+  .section-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 26px 0 10px; }
+
+  .sensor-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap: 12px; }
+  .sensor-card {
+    background: var(--card); border-radius: 14px; padding: 16px;
+    text-align: center; box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  }
+  .sensor-card .label { color: var(--muted); font-size: 0.75rem; margin-bottom: 6px; }
+  .sensor-card .value { font-size: 1.6rem; font-weight: 700; }
+  .sensor-card .value.warn { color: var(--warn); }
+
+  .device-card {
+    background: var(--card);
+    border-radius: 16px;
+    padding: 18px 20px;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  }
+  .device-info { display: flex; flex-direction: column; gap: 4px; }
+  .device-name { font-weight: 600; font-size: 1rem; }
+  .mode-badge {
+    font-size: 0.7rem;
+    color: var(--muted);
+    width: fit-content;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--off-bg);
+  }
+  .mode-badge.manual { color: var(--accent2); }
+
+  .controls { display: flex; align-items: center; gap: 10px; }
+  .status-text { font-size: 0.75rem; font-weight: 700; width: 34px; text-align: center; }
+  .status-text.on { color: var(--on); }
+  .status-text.off { color: var(--muted); }
+
+  .switch { position: relative; width: 54px; height: 30px; cursor: pointer; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; inset: 0; background: var(--off-bg); border-radius: 30px; transition: 0.25s; }
+  .slider::before {
+    content: ""; position: absolute; height: 24px; width: 24px; left: 3px; top: 3px;
+    background: white; border-radius: 50%; transition: 0.25s;
+  }
+  input:checked + .slider { background: var(--accent); }
+  input:checked + .slider::before { transform: translateX(24px); }
+
+  footer { text-align: center; color: var(--muted); font-size: 0.7rem; margin-top: 30px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🌱 Ginger Plant Monitor</h1>
+    <div class="sub">Remote control &amp; live sensor data</div>
+    <div class="pill-row">
+      <div class="pill"><span class="dot" id="dhtDot"></span><span id="dhtText">DHT22</span></div>
+      <div class="pill" id="updatedPill">Waiting for data…</div>
+    </div>
+  </header>
+
+  <div class="section-title">Sensors</div>
+  <div class="sensor-grid">
+    <div class="sensor-card"><div class="label">Temperature</div><div class="value" id="tempVal">--</div></div>
+    <div class="sensor-card"><div class="label">Humidity</div><div class="value" id="humVal">--</div></div>
+    <div class="sensor-card"><div class="label">Soil Moisture</div><div class="value" id="soilVal">--</div></div>
+    <div class="sensor-card"><div class="label">Light</div><div class="value" id="lightVal">--</div></div>
+  </div>
+
+  <div class="section-title">Devices</div>
+  <div id="deviceList"></div>
+
+  <footer>Connected to Firebase RTDB · data-monitoring-509a1</footer>
+</div>
+
+<script>
+  // ---------- Your Firebase project config ----------
+  const firebaseConfig = {
+    apiKey: "AIzaSyAbvw_jK1h0_wnHOs5YC5vjUFE-vNqnUvE",
+    databaseURL: "https://data-monitoring-509a1-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "data-monitoring-509a1"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+
+  const devices = [
+    { key: "fan",        name: "Fan" },
+    { key: "pump",       name: "Water Pump" },
+    { key: "humidifier", name: "Humidifier" },
+    { key: "light",      name: "Grow Light" }
+  ];
+
+  // ----- Build device cards -----
+  const listEl = document.getElementById("deviceList");
+  devices.forEach(d => {
+    const card = document.createElement("div");
+    card.className = "device-card";
+    card.innerHTML = `
+      <div class="device-info">
+        <div class="device-name">${d.name}</div>
+        <div class="mode-badge" id="mode-${d.key}">AUTO</div>
+      </div>
+      <div class="controls">
+        <span class="status-text off" id="status-${d.key}">OFF</span>
+        <label class="switch">
+          <input type="checkbox" id="switch-${d.key}">
+          <span class="slider"></span>
+        </label>
+      </div>
+    `;
+    listEl.appendChild(card);
+
+    // Toggling writes to /commands — the ESP32 picks it up within ~5s
+    document.getElementById(`switch-${d.key}`).addEventListener("change", (e) => {
+      db.ref("commands/" + d.key).set(e.target.checked);
+    });
+  });
+
+  // ----- Live device state (reflects actual relay state + mode) -----
+  db.ref("devices").on("value", snap => {
+    const data = snap.val() || {};
+    devices.forEach(d => {
+      const dev = data[d.key];
+      if (!dev) return;
+      document.getElementById(`switch-${d.key}`).checked = !!dev.state;
+      const statusEl = document.getElementById(`status-${d.key}`);
+      statusEl.textContent = dev.state ? "ON" : "OFF";
+      statusEl.className = "status-text " + (dev.state ? "on" : "off");
+      const modeEl = document.getElementById(`mode-${d.key}`);
+      modeEl.textContent = (dev.mode || "auto").toUpperCase();
+      modeEl.className = "mode-badge " + (dev.mode === "manual" ? "manual" : "");
+    });
+  });
+
+  // ----- Live sensor data -----
+  db.ref("sensors").on("value", snap => {
+    const s = snap.val();
+    if (!s) return;
+    document.getElementById("tempVal").textContent = `${parseFloat(s.temperature).toFixed(1)}°C`;
+    document.getElementById("humVal").textContent = `${parseInt(s.humidity)}%`;
+    document.getElementById("soilVal").textContent = `${s.soil_moisture_percent}%`;
+    document.getElementById("lightVal").textContent = s.light_status;
+
+    const dhtOk = !!s.dht_ok;
+    document.getElementById("dhtDot").classList.toggle("ok", dhtOk);
+    document.getElementById("dhtText").textContent = dhtOk ? "DHT22 OK" : "DHT22 error";
+    document.getElementById("tempVal").classList.toggle("warn", !dhtOk);
+    document.getElementById("humVal").classList.toggle("warn", !dhtOk);
+
+    document.getElementById("updatedPill").textContent =
+      "Updated " + new Date().toLocaleTimeString();
+  });
+</script>
+</body>
+</html>
